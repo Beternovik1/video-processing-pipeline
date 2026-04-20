@@ -10,3 +10,19 @@ crash.log
 
 # Ignore any .tfvars files that are generated automatically
 *.tfvars.json
+
+
+# Local .terraform directories
+**/.terraform/
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Ignorar archivos .zip temporales (como el placeholder de lambda)
+*.zip
+
+# Entornos virtuales de Python 
+venv/
+__pycache__/
+*.pyc
