@@ -33,20 +33,42 @@ locals {
 # CI/CD con `aws lambda update-function-code` después del apply.
 # ==============================================================================
 
-data "archive_file" "placeholder" {
+# data "archive_file" "placeholder" {
+#   type        = "zip"
+#   output_path = "/tmp/lambda_placeholder.zip"
+
+#   source {
+#     content  = <<-PYTHON
+#       import json
+
+#       def handler(event, context):
+#           print(json.dumps({"message": "Placeholder. Deploy real code via CI/CD.", "event": event}))
+#           return {"statusCode": 200}
+#     PYTHON
+#     filename = "handler.py"
+#   }
+# }
+
+# ==============================================================================
+# Empaquetado del Código Real
+# ==============================================================================
+
+data "archive_file" "metadata_code" {
   type        = "zip"
-  output_path = "/tmp/lambda_placeholder.zip"
+  source_dir  = "${path.module}/../../../src/metadata_extractor"
+  output_path = "${path.module}/../../../.terraform/metadata_extractor.zip"
+}
 
-  source {
-    content  = <<-PYTHON
-      import json
+data "archive_file" "ffmpeg_code" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../src/ffmpeg_processor"
+  output_path = "${path.module}/../../../.terraform/ffmpeg_processor.zip"
+}
 
-      def handler(event, context):
-          print(json.dumps({"message": "Placeholder. Deploy real code via CI/CD.", "event": event}))
-          return {"statusCode": 200}
-    PYTHON
-    filename = "handler.py"
-  }
+data "archive_file" "notification_code" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../src/notification"
+  output_path = "${path.module}/../../../.terraform/notification.zip"
 }
 
 # ==============================================================================
@@ -90,10 +112,17 @@ resource "aws_iam_role_policy" "ffmpeg_custom" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ReadRawVideo"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:HeadObject"]
-        Resource = "${var.raw_bucket_arn}/*"
+        Sid    = "ReadRawVideo"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:HeadObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          var.raw_bucket_arn,
+          "${var.raw_bucket_arn}/*"
+        ]
       },
       {
         Sid      = "WriteProcessedVideo"
@@ -131,13 +160,16 @@ resource "aws_lambda_function" "ffmpeg" {
   description   = "Transcodifica videos con FFmpeg. Lee de S3 raw, escribe en S3 processed y DynamoDB."
   role          = aws_iam_role.ffmpeg.arn
 
-  filename         = data.archive_file.placeholder.output_path
-  source_code_hash = data.archive_file.placeholder.output_base64sha256
-  handler          = "handler.handler"
+  # AQUI ESTÁ LA CLAVE: Apuntar al zip correcto
+  filename         = data.archive_file.ffmpeg_code.output_path
+  source_code_hash = data.archive_file.ffmpeg_code.output_base64sha256
+  handler          = "app.handler"
   runtime          = var.lambda_runtime
   architectures    = [var.lambda_architecture]
 
-  # Límites físicos configurables por entorno
+  # AQUI ESTÁ LA OTRA CLAVE: Inyectar el binario
+  layers = [aws_lambda_layer_version.ffmpeg.arn]
+
   memory_size = var.ffmpeg_lambda_memory_mb
   timeout     = var.ffmpeg_lambda_timeout_seconds
 
@@ -239,11 +271,13 @@ resource "aws_lambda_function" "metadata" {
   description   = "Extrae metadatos de video (codec, resolución, FPS, duración) y los escribe en DynamoDB."
   role          = aws_iam_role.metadata.arn
 
-  filename         = data.archive_file.placeholder.output_path
-  source_code_hash = data.archive_file.placeholder.output_base64sha256
+filename         = data.archive_file.metadata_code.output_path
+  source_code_hash = data.archive_file.metadata_code.output_base64sha256
   handler          = "handler.handler"
   runtime          = var.lambda_runtime
   architectures    = [var.lambda_architecture]
+
+  layers = [aws_lambda_layer_version.ffprobe.arn]
 
   memory_size = var.metadata_lambda_memory_mb
   timeout     = var.metadata_lambda_timeout_seconds
@@ -271,7 +305,7 @@ resource "aws_lambda_event_source_mapping" "metadata" {
   enabled          = true
 
   batch_size = var.metadata_esm_batch_size
-
+  
   scaling_config {
     maximum_concurrency = var.metadata_esm_max_concurrency
   }
@@ -341,8 +375,9 @@ resource "aws_lambda_function" "notification" {
   description   = "Lee el DynamoDB Stream y publica en SNS cuando cambia processing_status."
   role          = aws_iam_role.notification.arn
 
-  filename         = data.archive_file.placeholder.output_path
-  source_code_hash = data.archive_file.placeholder.output_base64sha256
+  # AQUI ESTÁ LA CLAVE: Apuntar al zip de notificaciones, no al placeholder
+  filename         = data.archive_file.notification_code.output_path
+  source_code_hash = data.archive_file.notification_code.output_base64sha256
   handler          = "handler.handler"
   runtime          = var.lambda_runtime
   architectures    = [var.lambda_architecture]
@@ -389,7 +424,7 @@ resource "aws_lambda_event_source_mapping" "notification" {
       pattern = jsonencode({
         dynamodb = {
           NewImage = {
-            processing_status = { S = [{ exists = true }] }
+            transcoding_status = { S = [{ exists = true }] }
           }
         }
       })
@@ -397,4 +432,45 @@ resource "aws_lambda_event_source_mapping" "notification" {
   }
 
   function_response_types = ["ReportBatchItemFailures"]
+}
+
+# ==============================================================================
+# Lambda Layer: FFprobe estático (ARM64)
+# ==============================================================================
+resource "aws_lambda_layer_version" "ffprobe" {
+  filename            = "${path.module}/../../layers/ffprobe-layer.zip"
+  layer_name          = "${local.name_prefix}-ffprobe-layer"
+  description         = "FFprobe static binary for extracting video metadata (ARM64)"
+  compatible_runtimes = ["python3.12"]
+  compatible_architectures = ["arm64"]
+
+  source_code_hash = filebase64sha256("${path.module}/../../layers/ffprobe-layer.zip")
+}
+
+resource "aws_lambda_layer_version" "ffmpeg" {
+  filename            = "${path.module}/../../layers/ffmpeg-layer.zip"
+  layer_name          = "${local.name_prefix}-ffmpeg-layer"
+  description         = "FFmpeg static binary for video transcoding (ARM64)"
+  compatible_runtimes = ["python3.12"]
+  compatible_architectures = ["arm64"]
+
+  source_code_hash = filebase64sha256("${path.module}/../../layers/ffmpeg-layer.zip")
+}
+
+# ==============================================================================
+# Placeholder (Mantenimiento para Lambdas pendientes: FFmpeg y Notification)
+# ==============================================================================
+data "archive_file" "placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/../../../.terraform/lambda_placeholder.zip"
+
+  source {
+    content  = <<-PYTHON
+      import json
+      def handler(event, context):
+          print("Placeholder temporal. Pendiente de implementar código real.")
+          return {"statusCode": 200}
+    PYTHON
+    filename = "handler.py"
+  }
 }

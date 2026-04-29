@@ -44,7 +44,7 @@ locals {
 
 resource "aws_sns_topic" "ingest" {
   name              = "${local.name_prefix}-${var.sns_ingest_topic_suffix}"
-  kms_master_key_id = var.sns_kms_master_key_id
+  # kms_master_key_id = var.sns_kms_master_key_id <- Esta linea esta maldita
 
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-${var.sns_ingest_topic_suffix}"
@@ -101,8 +101,7 @@ resource "aws_sqs_queue" "ffmpeg_dlq" {
   name                      = "${local.name_prefix}-${var.ffmpeg_queue_suffix}-dlq"
   message_retention_seconds = var.dlq_message_retention_seconds
 
-  kms_master_key_id                 = "alias/aws/sqs"
-  kms_data_key_reuse_period_seconds = 300
+  sqs_managed_sse_enabled = true
 
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-${var.ffmpeg_queue_suffix}-dlq"
@@ -123,8 +122,7 @@ resource "aws_sqs_queue" "ffmpeg" {
   # Reduce llamadas API innecesarias y costo en pipelines con tráfico intermitente.
   receive_wait_time_seconds = 20
 
-  kms_master_key_id                 = "alias/aws/sqs"
-  kms_data_key_reuse_period_seconds = 300
+  sqs_managed_sse_enabled = true
 
   # Después de max_receive_count intentos fallidos, el mensaje va al DLQ.
   redrive_policy = jsonencode({
@@ -146,8 +144,7 @@ resource "aws_sqs_queue" "metadata_dlq" {
   name                      = "${local.name_prefix}-${var.metadata_queue_suffix}-dlq"
   message_retention_seconds = var.dlq_message_retention_seconds
 
-  kms_master_key_id                 = "alias/aws/sqs"
-  kms_data_key_reuse_period_seconds = 300
+  sqs_managed_sse_enabled = true
 
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-${var.metadata_queue_suffix}-dlq"
@@ -161,8 +158,7 @@ resource "aws_sqs_queue" "metadata" {
   visibility_timeout_seconds = var.metadata_queue_visibility_timeout_seconds
   receive_wait_time_seconds  = 20
 
-  kms_master_key_id                 = "alias/aws/sqs"
-  kms_data_key_reuse_period_seconds = 300
+  sqs_managed_sse_enabled = true
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.metadata_dlq.arn
@@ -318,7 +314,7 @@ resource "aws_s3_bucket_notification" "raw_to_sns" {
 
 resource "aws_sns_topic" "alerts" {
   name              = "${local.name_prefix}-${var.sns_alerts_topic_suffix}"
-  kms_master_key_id = var.sns_kms_master_key_id
+  # kms_master_key_id = var.sns_kms_master_key_id <- Esta linea esta maldita
 
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-${var.sns_alerts_topic_suffix}"
