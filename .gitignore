@@ -26,3 +26,5 @@ crash.log
 venv/
 __pycache__/
 *.pyc
+
+demo_media/

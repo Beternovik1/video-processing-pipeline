@@ -203,3 +203,35 @@ output "notification_lambda_name" { value = module.compute.notification_lambda_n
 output "ffmpeg_log_group"         { value = module.compute.ffmpeg_log_group_name }
 output "metadata_log_group"       { value = module.compute.metadata_log_group_name }
 output "notification_log_group"   { value = module.compute.notification_log_group_name }
+
+# ==============================================================================
+# AWS Budgets: Control de Costos (FinOps)
+# ==============================================================================
+
+resource "aws_budgets_budget" "cost_limit" {
+  name              = "presupuesto-mensual-${var.project}"
+  budget_type       = "COST"
+  limit_amount      = "10"
+  limit_unit        = "USD"
+  time_period_start = "2026-04-01_00:00"
+  time_unit         = "MONTHLY"
+
+  # Alerta 1: Cuando el gasto REAL llega al 80% ($8)
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = ["edgaralfarohernandez15@gmail.com"] 
+  }
+
+  # Alerta 2: Cuando el gasto PROYECTADO llega al 100% ($10)
+  # Esto avisa ANTES de que te cobren, basándose en el ritmo de uso.
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = ["edgaralfarohernandez15@gmail.com"]
+  }
+}

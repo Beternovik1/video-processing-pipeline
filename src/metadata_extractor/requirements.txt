@@ -1,0 +1,8 @@
+# boto3 ya viene preinstalado en el runtime de Lambda (Python 3.12).
+# No es necesario empaquetarlo — añadirlo aumenta el ZIP sin beneficio.
+#
+# Si en el futuro se implementa FFprobe con subprocess, no se necesitan
+# dependencias adicionales de Python — solo el binario en un Lambda Layer.
+#
+# Si se elige MediaInfo o pymediainfo como alternativa:
+# pymediainfo==6.1.0
